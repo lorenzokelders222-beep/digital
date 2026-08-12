@@ -1,7 +1,7 @@
 import { useMemo, useState, useEffect } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import { toast } from "sonner";
-import { Check, ChevronRight, ChevronLeft, Lock } from "lucide-react";
+import { Check, ChevronRight, ChevronLeft, Lock, Sparkles } from "lucide-react";
 import api from "../lib/api";
 import { SERVICES } from "../lib/services";
 
@@ -27,6 +27,8 @@ export default function Booking() {
   const [step, setStep] = useState(0);
   const [data, setData] = useState(initial);
   const [loading, setLoading] = useState(false);
+  const [aiText, setAiText] = useState("");
+  const [aiBusy, setAiBusy] = useState(false);
 
   useEffect(() => {
     const prefill = params.get("dienst");
@@ -40,6 +42,26 @@ export default function Booking() {
   const deposit = price > 0 ? Math.round(price * 0.25) : 0;
 
   const change = (k) => (e) => setData((d) => ({ ...d, [k]: e.target.value }));
+
+  const aiAutofill = async () => {
+    if (!aiText.trim()) return;
+    setAiBusy(true);
+    try {
+      const res = await api.post("/ai/parse-booking", { text: aiText });
+      const patch = {};
+      if (res.data.service_slug && SERVICES.find((s) => s.slug === res.data.service_slug)) {
+        patch.service_slug = res.data.service_slug;
+      }
+      if (res.data.location) patch.location = res.data.location;
+      if (res.data.message) patch.message = res.data.message;
+      setData((d) => ({ ...d, ...patch }));
+      toast.success("AI heeft je aanvraag ingevuld — controleer en ga verder.");
+    } catch {
+      toast.error("Kon je tekst niet interpreteren. Probeer het handmatig.");
+    } finally {
+      setAiBusy(false);
+    }
+  };
 
   const validate = () => {
     if (step === 0 && !data.service_slug) return "Kies eerst een dienst.";
@@ -106,6 +128,33 @@ export default function Booking() {
           {/* Step 0 */}
           {step === 0 && (
             <div data-testid="booking-step-service">
+              {/* AI autofill */}
+              <div className="mb-6 p-5 border border-[#D4AF37]/25 bg-[#D4AF37]/[0.03]">
+                <div className="flex items-center gap-2 mb-3">
+                  <Sparkles size={14} className="text-[#D4AF37]" />
+                  <p className="eyebrow">AI Assistent</p>
+                </div>
+                <p className="text-xs text-zinc-400 mb-3">Beschrijf je shoot in één zin — AI kiest de juiste dienst en vult je aanvraag alvast in.</p>
+                <div className="flex gap-2">
+                  <input
+                    data-testid="booking-ai-input"
+                    className="input-luxe flex-1 py-2 text-sm"
+                    placeholder='Bijv. "Autoshoot voor mijn BMW M3 in Rotterdam, volgend weekend"'
+                    value={aiText}
+                    onChange={(e) => setAiText(e.target.value)}
+                    onKeyDown={(e) => e.key === "Enter" && (e.preventDefault(), aiAutofill())}
+                  />
+                  <button
+                    onClick={aiAutofill}
+                    disabled={aiBusy || !aiText.trim()}
+                    data-testid="booking-ai-submit"
+                    className="btn-gold py-2 px-4 text-[11px]"
+                  >
+                    {aiBusy ? "…" : "Vul in"}
+                  </button>
+                </div>
+              </div>
+
               <h2 className="font-serif text-2xl mb-6">Kies een dienst</h2>
               <div className="grid sm:grid-cols-2 gap-3">
                 {SERVICES.map((s) => (

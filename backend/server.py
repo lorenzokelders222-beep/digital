@@ -6,13 +6,16 @@ from datetime import datetime, timezone, timedelta
 from pathlib import Path
 from typing import Optional, List
 
+import json
 import httpx
 import jwt
 from fastapi import FastAPI, APIRouter, HTTPException, Depends, Request, Response
+from fastapi.responses import StreamingResponse
 from dotenv import load_dotenv
 from starlette.middleware.cors import CORSMiddleware
 from motor.motor_asyncio import AsyncIOMotorClient
 from pydantic import BaseModel, Field, EmailStr, ConfigDict
+from emergentintegrations.llm.chat import LlmChat, UserMessage, TextDelta, StreamDone
 
 ROOT_DIR = Path(__file__).parent
 load_dotenv(ROOT_DIR / ".env")
@@ -27,6 +30,8 @@ CONTACT_EMAIL = os.environ.get("CONTACT_EMAIL", OWNER_EMAIL)
 ADMIN_EMAIL = os.environ["ADMIN_EMAIL"]
 ADMIN_PASSWORD = os.environ["ADMIN_PASSWORD"]
 JWT_SECRET = os.environ["JWT_SECRET"]
+EMERGENT_LLM_KEY = os.environ["EMERGENT_LLM_KEY"]
+LLM_MODEL = "gpt-5.4"
 
 # Constants (never read from env — survives deployment)
 EMAIL_BASE_URL = "https://integrations.emergentagent.com"
@@ -126,6 +131,78 @@ class User(BaseModel):
 
 class SessionExchange(BaseModel):
     session_id: str
+
+
+class ChatTurn(BaseModel):
+    role: str  # "user" | "assistant"
+    text: str
+
+
+class ChatRequest(BaseModel):
+    message: str
+    history: List[ChatTurn] = []
+    session_id: Optional[str] = None
+
+
+class ParseBookingRequest(BaseModel):
+    text: str
+
+
+class QuoteRequest(BaseModel):
+    service: str
+    client_name: Optional[str] = ""
+    wishes: str
+    budget: Optional[str] = ""
+
+
+class CaptionRequest(BaseModel):
+    image_url: Optional[str] = ""
+    context: str  # what's in the photo / vibe
+
+
+# --- AI helpers ---
+KV_SERVICES_CONTEXT = """
+Diensten en richtprijzen KeldersVisuals:
+- Fotografie (vanaf €350)
+- Videografie (vanaf €650)
+- Dronefotografie & FPV (vanaf €495)
+- Automotive (vanaf €425)
+- Portretfotografie (vanaf €275)
+- Bedrijfsfotografie (vanaf €550)
+- Social Media Content (vanaf €395)
+- Maatwerk (prijs op aanvraag)
+
+Contact: info@keldersvisuals.nl · 06-15133571 · WhatsApp beschikbaar.
+Werkgebied: Nederland (op locatie of studio).
+Slogan: Jouw moment, onze passie.
+"""
+
+CHAT_SYSTEM_PROMPT = f"""Je bent de digitale assistent van KeldersVisuals — een high-end fotografie- en videografiebedrijf.
+Antwoord altijd in het Nederlands, warm en professioneel, kort en to-the-point (max 3-4 zinnen tenzij nodig).
+Verwijs bij interesse altijd naar de boekingsmodule (/boeken), portfolio (/portfolio), of contact (WhatsApp/e-mail).
+Verzin GEEN prijzen of details buiten deze feiten:
+{KV_SERVICES_CONTEXT}
+Als je iets niet zeker weet: zeg eerlijk dat de klant beter even direct contact kan opnemen via WhatsApp 06-15133571.
+Gebruik geen emoji's."""
+
+
+def build_llm(system_prompt: str, session_id: Optional[str] = None) -> LlmChat:
+    return LlmChat(
+        api_key=EMERGENT_LLM_KEY,
+        session_id=session_id or f"kv_{uuid.uuid4().hex[:12]}",
+        system_message=system_prompt,
+    ).with_model("openai", LLM_MODEL)
+
+
+async def llm_oneshot(system_prompt: str, user_text: str) -> str:
+    chat = build_llm(system_prompt)
+    parts: List[str] = []
+    async for ev in chat.stream_message(UserMessage(text=user_text)):
+        if isinstance(ev, TextDelta):
+            parts.append(ev.content)
+        elif isinstance(ev, StreamDone):
+            break
+    return "".join(parts).strip()
 
 
 # --- Email helper ---
@@ -471,6 +548,100 @@ async def delete_booking(booking_id: str, _: User = Depends(require_admin)):
     if r.deleted_count == 0:
         raise HTTPException(status_code=404, detail="Not found")
     return {"status": "deleted"}
+
+
+# --- AI routes ---
+@api.post("/ai/chat")
+async def ai_chat(payload: ChatRequest):
+    """Streaming SSE chat with the KeldersVisuals concierge."""
+    # Build compact context from recent history
+    history_text = ""
+    for turn in payload.history[-6:]:
+        prefix = "Bezoeker" if turn.role == "user" else "Assistent"
+        history_text += f"{prefix}: {turn.text}\n"
+    prompt = payload.message if not history_text else f"Voorgaand gesprek:\n{history_text}\nNieuwe vraag van bezoeker: {payload.message}"
+
+    async def event_gen():
+        try:
+            chat = build_llm(CHAT_SYSTEM_PROMPT, session_id=payload.session_id)
+            async for ev in chat.stream_message(UserMessage(text=prompt)):
+                if isinstance(ev, TextDelta):
+                    yield f"data: {json.dumps({'delta': ev.content})}\n\n"
+                elif isinstance(ev, StreamDone):
+                    yield "data: [DONE]\n\n"
+                    return
+            yield "data: [DONE]\n\n"
+        except Exception as e:
+            logger.error(f"AI chat error: {e}")
+            yield f"data: {json.dumps({'error': 'AI tijdelijk niet beschikbaar'})}\n\n"
+            yield "data: [DONE]\n\n"
+
+    return StreamingResponse(
+        event_gen(),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no", "Connection": "keep-alive"},
+    )
+
+
+@api.post("/ai/parse-booking")
+async def ai_parse_booking(payload: ParseBookingRequest):
+    """Extract structured booking fields from freeform Dutch text."""
+    system = """Je bent een booking-parser voor KeldersVisuals. Lees de vrije tekst van een klant en geef een schoon JSON-object terug met deze velden:
+{
+  "service_slug": één van: fotografie | videografie | drone-fpv | automotive | portret | bedrijf | social-media | maatwerk,
+  "location": kort adres/stad of "",
+  "date_hint": suggestie datum in vrije tekst of "",
+  "message": samenvatting van bijzondere wensen (max 200 tekens)
+}
+Antwoord ALLEEN met valid JSON. Geen uitleg, geen backticks."""
+    try:
+        raw = await llm_oneshot(system, payload.text)
+        # Strip markdown fences if any
+        cleaned = raw.strip().removeprefix("```json").removeprefix("```").removesuffix("```").strip()
+        data = json.loads(cleaned)
+        return {
+            "service_slug": data.get("service_slug", ""),
+            "location": data.get("location", ""),
+            "date_hint": data.get("date_hint", ""),
+            "message": data.get("message", ""),
+        }
+    except Exception as e:
+        logger.error(f"parse-booking error: {e}")
+        raise HTTPException(status_code=500, detail="AI kon dit niet interpreteren")
+
+
+@api.post("/admin/ai/quote")
+async def ai_generate_quote(payload: QuoteRequest, _: User = Depends(require_admin)):
+    """Generate a personalized quote text for a client (admin only)."""
+    system = """Je bent een offerte-schrijver voor KeldersVisuals (high-end fotografie & videografie in Nederland).
+Schrijf een korte, persoonlijke, professionele offerte-tekst in het Nederlands.
+- Toon: warm, zelfverzekerd, luxe.
+- Structuur: aanhef, korte introductie op de dienst, wat we leveren, richtprijs (indien opgegeven, anders 'op aanvraag'), afsluiting met call-to-action naar WhatsApp/e-mail.
+- Geen emoji's, geen markdown, gewoon vloeiende tekst met alinea-scheidingen (\\n\\n).
+- Maximaal ~180 woorden."""
+    user = f"Klant: {payload.client_name or 'onbekend'}\nDienst: {payload.service}\nWensen: {payload.wishes}\nBudget: {payload.budget or 'niet opgegeven'}"
+    text = await llm_oneshot(system, user)
+    return {"text": text}
+
+
+@api.post("/admin/ai/caption")
+async def ai_generate_caption(payload: CaptionRequest, _: User = Depends(require_admin)):
+    """Generate 3 caption variations for social media / portfolio."""
+    system = """Je bent een social-media copywriter voor KeldersVisuals.
+Genereer PRECIES 3 varianten van een korte caption in het Nederlands voor een foto/video.
+- Variant 1: kort & poëtisch (max 12 woorden)
+- Variant 2: professioneel voor Instagram (~25 woorden, met natuurlijke hashtags aan het eind)
+- Variant 3: story-style, persoonlijk (~30 woorden, geen hashtags)
+Antwoord ALLEEN als valid JSON: {"captions": [{"style": "...", "text": "..."}, ...]}
+Geen backticks, geen uitleg buiten JSON."""
+    try:
+        raw = await llm_oneshot(system, payload.context)
+        cleaned = raw.strip().removeprefix("```json").removeprefix("```").removesuffix("```").strip()
+        data = json.loads(cleaned)
+        return data
+    except Exception as e:
+        logger.error(f"caption error: {e}")
+        raise HTTPException(status_code=500, detail="AI kon geen captions genereren")
 
 
 app.include_router(api)

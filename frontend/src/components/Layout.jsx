@@ -1,6 +1,7 @@
 import Navigation from "./Navigation";
 import Footer from "./Footer";
 import FloatingWhatsApp from "./FloatingWhatsApp";
+import AIChat from "./AIChat";
 
 export default function Layout({ children }) {
   return (
@@ -9,6 +10,7 @@ export default function Layout({ children }) {
       <main className="pt-20">{children}</main>
       <Footer />
       <FloatingWhatsApp />
+      <AIChat />
     </div>
   );
 }

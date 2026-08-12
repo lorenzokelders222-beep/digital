@@ -1,8 +1,9 @@
 import { useEffect, useState } from "react";
 import { toast } from "sonner";
-import { LogOut, RefreshCcw, MessageCircle, Mail } from "lucide-react";
+import { LogOut, RefreshCcw, MessageCircle, Mail, Sparkles } from "lucide-react";
 import api from "../lib/api";
 import { useAuth } from "../context/AuthContext";
+import AITools from "../components/AITools";
 
 const STATUS_OPTIONS = [
   { v: "new", label: "Nieuw" },
@@ -78,15 +79,15 @@ export default function AdminDashboard() {
         </div>
 
         <div className="flex gap-2 mb-6 border-b border-amber-500/10">
-          {[["bookings", `Boekingen (${bookings.length})`], ["contacts", `Contact berichten (${contacts.length})`]].map(([k, l]) => (
+          {[["bookings", `Boekingen (${bookings.length})`], ["contacts", `Contact berichten (${contacts.length})`], ["ai", "AI Tools"]].map(([k, l]) => (
             <button
               key={k}
               onClick={() => setTab(k)}
               data-testid={`admin-tab-${k}`}
-              className={`px-5 py-3 text-xs tracking-[0.2em] uppercase transition-colors border-b-2 -mb-px ${
+              className={`px-5 py-3 text-xs tracking-[0.2em] uppercase transition-colors border-b-2 -mb-px flex items-center gap-2 ${
                 tab === k ? "border-[#D4AF37] text-[#D4AF37]" : "border-transparent text-zinc-400 hover:text-zinc-200"
               }`}
-            >{l}</button>
+            >{k === "ai" && <Sparkles size={12} />} {l}</button>
           ))}
         </div>
 
@@ -152,6 +153,7 @@ export default function AdminDashboard() {
             ))}
           </div>
         )}
+        {tab === "ai" && <AITools />}
       </div>
     </div>
   );
