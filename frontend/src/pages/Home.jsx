@@ -1,6 +1,7 @@
 import { Link } from "react-router-dom";
 import { ArrowUpRight, Camera, Video, Plane, Car, User, Building2, Sparkles, Heart, ChevronRight, MessageCircle } from "lucide-react";
 import { SERVICES, PORTFOLIO, WHATSAPP_URL } from "../lib/services";
+import ReviewsSection from "../components/ReviewsSection";
 
 const HERO_BG = "https://images.unsplash.com/photo-1567808291548-fc3ee04dbcf0?crop=entropy&cs=srgb&fm=jpg&q=85&w=2400";
 
@@ -186,6 +187,9 @@ export default function Home() {
           </div>
         </div>
       </section>
+
+      {/* REVIEWS */}
+      <ReviewsSection />
 
       {/* FINAL CTA */}
       <section className="py-24 lg:py-32">

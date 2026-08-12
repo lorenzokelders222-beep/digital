@@ -31,6 +31,7 @@ ADMIN_EMAIL = os.environ["ADMIN_EMAIL"]
 ADMIN_PASSWORD = os.environ["ADMIN_PASSWORD"]
 JWT_SECRET = os.environ["JWT_SECRET"]
 EMERGENT_LLM_KEY = os.environ["EMERGENT_LLM_KEY"]
+PUBLIC_SITE_URL = os.environ.get("PUBLIC_SITE_URL", "").rstrip("/")
 LLM_MODEL = "gpt-5.4"
 
 # Constants (never read from env — survives deployment)
@@ -117,6 +118,30 @@ class AdminLogin(BaseModel):
 class BookingStatusUpdate(BaseModel):
     booking_status: Optional[str] = None
     payment_status: Optional[str] = None
+
+
+class ReviewCreate(BaseModel):
+    booking_id: str
+    rating: int = Field(ge=1, le=5)
+    name: str
+    text: str
+
+
+class Review(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+    id: str = Field(default_factory=lambda: str(uuid.uuid4()))
+    booking_id: str
+    user_id: Optional[str] = None
+    name: str
+    service: str = ""
+    rating: int = 5
+    text: str
+    approved: bool = False
+    created_at: str = Field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
+
+
+class ReviewAdminUpdate(BaseModel):
+    approved: bool
 
 
 class User(BaseModel):
@@ -306,6 +331,53 @@ def contact_email_html(c: ContactMessage) -> str:
               <tr><td style="color:#71717A;padding:6px 0;">Gewenste datum</td><td style="color:#F4F4F6;text-align:right;">{c.preferred_date or '-'}</td></tr>
             </table>
             <p style="color:#A1A1AA;margin-top:20px;padding-top:16px;border-top:1px solid rgba(212,175,55,0.15);">{c.message}</p>
+          </td></tr>
+        </table>
+      </td></tr>
+    </table>
+    """
+
+
+def review_request_email_html(b: Booking, review_url: str) -> str:
+    return f"""
+    <table width="100%" style="background:#0A0A0C;padding:40px 0;font-family:Arial,sans-serif;">
+      <tr><td align="center">
+        <table width="600" style="background:#121216;border:1px solid rgba(212,175,55,0.15);padding:40px;">
+          <tr><td style="text-align:center;padding-bottom:24px;border-bottom:1px solid rgba(212,175,55,0.2);">
+            <div style="font-family:Georgia,serif;font-size:28px;color:#D4AF37;letter-spacing:4px;">KELDERSVISUALS</div>
+            <div style="color:#A1A1AA;font-size:12px;letter-spacing:3px;margin-top:6px;">JOUW MOMENT, ONZE PASSIE</div>
+          </td></tr>
+          <tr><td style="padding-top:32px;">
+            <h1 style="color:#F4F4F6;font-family:Georgia,serif;font-weight:300;font-size:24px;margin:0 0 16px;">Hoe was jouw ervaring?</h1>
+            <p style="color:#A1A1AA;line-height:1.7;font-size:14px;">Hallo {b.name},</p>
+            <p style="color:#A1A1AA;line-height:1.7;font-size:14px;">We hopen dat je jouw {b.service.lower()} van {b.date} met plezier hebt beleefd. Zou je één minuut willen nemen om een korte review achter te laten? Het helpt ons enorm — en het helpt toekomstige klanten om ons te vinden.</p>
+          </td></tr>
+          <tr><td style="padding-top:24px;text-align:center;">
+            <div style="color:#D4AF37;font-size:24px;letter-spacing:6px;margin-bottom:24px;">★ ★ ★ ★ ★</div>
+            <a href="{review_url}" style="display:inline-block;background:#D4AF37;color:#0A0A0C;padding:14px 32px;text-decoration:none;font-weight:600;letter-spacing:2px;font-size:12px;text-transform:uppercase;">Deel je ervaring</a>
+          </td></tr>
+          <tr><td style="padding-top:32px;border-top:1px solid rgba(212,175,55,0.1);margin-top:32px;text-align:center;">
+            <p style="color:#71717A;font-size:12px;margin:16px 0 4px;">info@keldersvisuals.nl · 06-15133571</p>
+            <p style="color:#71717A;font-size:11px;">© KeldersVisuals</p>
+          </td></tr>
+        </table>
+      </td></tr>
+    </table>
+    """
+
+
+def owner_review_html(r: Review) -> str:
+    stars = "★" * r.rating + "☆" * (5 - r.rating)
+    return f"""
+    <table width="100%" style="background:#0A0A0C;padding:32px 0;font-family:Arial,sans-serif;">
+      <tr><td align="center">
+        <table width="600" style="background:#121216;border:1px solid rgba(212,175,55,0.2);padding:32px;">
+          <tr><td>
+            <h2 style="color:#D4AF37;font-family:Georgia,serif;font-weight:300;margin:0 0 12px;">Nieuwe Review</h2>
+            <p style="color:#D4AF37;font-size:22px;letter-spacing:4px;margin:0 0 20px;">{stars}</p>
+            <p style="color:#F4F4F6;font-size:14px;"><strong>{r.name}</strong> — {r.service}</p>
+            <p style="color:#A1A1AA;margin-top:16px;padding-top:16px;border-top:1px solid rgba(212,175,55,0.15);line-height:1.7;">"{r.text}"</p>
+            <p style="color:#71717A;font-size:12px;margin-top:20px;">Log in op /admin om te modereren en publiceren.</p>
           </td></tr>
         </table>
       </td></tr>
@@ -534,12 +606,30 @@ async def update_booking(booking_id: str, payload: BookingStatusUpdate, _: User 
     update = {k: v for k, v in payload.model_dump().items() if v is not None}
     if not update:
         raise HTTPException(status_code=400, detail="Nothing to update")
+    # Look up current state to detect status transitions
+    current = await db.bookings.find_one({"id": booking_id}, {"_id": 0})
+    if not current:
+        raise HTTPException(status_code=404, detail="Not found")
     res = await db.bookings.find_one_and_update(
         {"id": booking_id}, {"$set": update}, return_document=True, projection={"_id": 0}
     )
-    if not res:
-        raise HTTPException(status_code=404, detail="Not found")
-    return Booking(**res)
+    booking = Booking(**res)
+    # Trigger review request email on transition to "completed"
+    if update.get("booking_status") == "completed" and current.get("booking_status") != "completed":
+        if not current.get("review_requested_at"):
+            base = PUBLIC_SITE_URL or ""
+            review_url = f"{base}/review/{booking.id}"
+            asyncio.create_task(send_email(
+                booking.email,
+                "Hoe was jouw ervaring? — KeldersVisuals",
+                review_request_email_html(booking, review_url),
+                reply_to=CONTACT_EMAIL,
+            ))
+            await db.bookings.update_one(
+                {"id": booking_id},
+                {"$set": {"review_requested_at": datetime.now(timezone.utc).isoformat()}},
+            )
+    return booking
 
 
 @api.delete("/admin/bookings/{booking_id}")
@@ -642,6 +732,76 @@ Geen backticks, geen uitleg buiten JSON."""
     except Exception as e:
         logger.error(f"caption error: {e}")
         raise HTTPException(status_code=500, detail="AI kon geen captions genereren")
+
+
+# --- Reviews ---
+@api.get("/reviews/booking/{booking_id}")
+async def get_review_booking_context(booking_id: str):
+    """Public: fetch minimal booking info so the review form can render (name/service). No sensitive data."""
+    doc = await db.bookings.find_one({"id": booking_id}, {"_id": 0})
+    if not doc:
+        raise HTTPException(status_code=404, detail="Boeking niet gevonden")
+    existing = await db.reviews.find_one({"booking_id": booking_id}, {"_id": 0})
+    return {
+        "booking_id": booking_id,
+        "name": doc.get("name", ""),
+        "service": doc.get("service", ""),
+        "date": doc.get("date", ""),
+        "has_review": bool(existing),
+    }
+
+
+@api.post("/reviews", response_model=Review)
+async def create_review(payload: ReviewCreate):
+    booking_doc = await db.bookings.find_one({"id": payload.booking_id}, {"_id": 0})
+    if not booking_doc:
+        raise HTTPException(status_code=404, detail="Boeking niet gevonden")
+    existing = await db.reviews.find_one({"booking_id": payload.booking_id})
+    if existing:
+        raise HTTPException(status_code=409, detail="Er is al een review voor deze boeking")
+    r = Review(
+        booking_id=payload.booking_id,
+        user_id=booking_doc.get("user_id"),
+        name=payload.name.strip() or booking_doc.get("name", ""),
+        service=booking_doc.get("service", ""),
+        rating=payload.rating,
+        text=payload.text.strip(),
+        approved=False,
+    )
+    await db.reviews.insert_one(r.model_dump())
+    asyncio.create_task(send_email(OWNER_EMAIL, f"Nieuwe review — {r.rating}★ van {r.name}", owner_review_html(r)))
+    return r
+
+
+@api.get("/reviews/public", response_model=List[Review])
+async def public_reviews():
+    docs = await db.reviews.find({"approved": True}, {"_id": 0}).sort("created_at", -1).to_list(50)
+    return [Review(**d) for d in docs]
+
+
+@api.get("/admin/reviews", response_model=List[Review])
+async def list_all_reviews(_: User = Depends(require_admin)):
+    docs = await db.reviews.find({}, {"_id": 0}).sort("created_at", -1).to_list(500)
+    return [Review(**d) for d in docs]
+
+
+@api.patch("/admin/reviews/{review_id}", response_model=Review)
+async def moderate_review(review_id: str, payload: ReviewAdminUpdate, _: User = Depends(require_admin)):
+    res = await db.reviews.find_one_and_update(
+        {"id": review_id}, {"$set": {"approved": payload.approved}},
+        return_document=True, projection={"_id": 0},
+    )
+    if not res:
+        raise HTTPException(status_code=404, detail="Not found")
+    return Review(**res)
+
+
+@api.delete("/admin/reviews/{review_id}")
+async def delete_review(review_id: str, _: User = Depends(require_admin)):
+    r = await db.reviews.delete_one({"id": review_id})
+    if r.deleted_count == 0:
+        raise HTTPException(status_code=404, detail="Not found")
+    return {"status": "deleted"}
 
 
 app.include_router(api)

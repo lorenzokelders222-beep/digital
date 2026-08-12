@@ -12,6 +12,7 @@ import Contact from "./pages/Contact";
 import Login from "./pages/Login";
 import AuthCallback from "./pages/AuthCallback";
 import MyAccount from "./pages/MyAccount";
+import Review from "./pages/Review";
 import AdminDashboard from "./pages/AdminDashboard";
 import "./App.css";
 
@@ -70,6 +71,7 @@ function AppRouter() {
               <Route path="/boeking-bevestiging/:id" element={<BookingConfirmation />} />
               <Route path="/contact" element={<Contact />} />
               <Route path="/mijn-account" element={<MyAccount />} />
+              <Route path="/review/:bookingId" element={<Review />} />
               <Route path="/privacy" element={<Legal title="Privacybeleid" />} />
               <Route path="/voorwaarden" element={<Legal title="Algemene voorwaarden" />} />
             </Routes>
