@@ -1,8 +1,8 @@
 import { useEffect, useState } from "react";
-import { useNavigate } from "react-router-dom";
 import { toast } from "sonner";
 import { LogOut, RefreshCcw, MessageCircle, Mail } from "lucide-react";
 import api from "../lib/api";
+import { useAuth } from "../context/AuthContext";
 
 const STATUS_OPTIONS = [
   { v: "new", label: "Nieuw" },
@@ -19,7 +19,7 @@ const PAY_OPTIONS = [
 ];
 
 export default function AdminDashboard() {
-  const nav = useNavigate();
+  const { user, logout } = useAuth();
   const [tab, setTab] = useState("bookings");
   const [bookings, setBookings] = useState([]);
   const [contacts, setContacts] = useState([]);
@@ -32,29 +32,15 @@ export default function AdminDashboard() {
       setBookings(b.data);
       setContacts(c.data);
     } catch (e) {
-      if (e.response?.status === 401) {
-        localStorage.removeItem("kv_admin_token");
-        nav("/admin/login");
+      if (e.response?.status === 401 || e.response?.status === 403) {
+        toast.error("Sessie verlopen. Log opnieuw in.");
       }
     } finally {
       setLoading(false);
     }
   };
 
-  useEffect(() => {
-    if (!localStorage.getItem("kv_admin_token")) {
-      nav("/admin/login");
-      return;
-    }
-    load();
-    // eslint-disable-next-line
-  }, []);
-
-  const logout = () => {
-    localStorage.removeItem("kv_admin_token");
-    localStorage.removeItem("kv_admin_email");
-    nav("/admin/login");
-  };
+  useEffect(() => { load(); }, []);
 
   const updateStatus = async (id, field, value) => {
     try {
@@ -72,9 +58,12 @@ export default function AdminDashboard() {
     <div className="py-16 lg:py-20">
       <div className="max-w-7xl mx-auto px-4 sm:px-8 lg:px-16">
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 mb-10">
-          <div>
-            <p className="eyebrow mb-2">Admin Dashboard</p>
-            <h1 className="font-serif text-4xl font-light">KeldersVisuals</h1>
+          <div className="flex items-center gap-4">
+            {user?.picture && <img src={user.picture} alt="" className="w-12 h-12 rounded-full border border-[#D4AF37]/50" />}
+            <div>
+              <p className="eyebrow mb-1">Admin Dashboard</p>
+              <h1 className="font-serif text-3xl font-light">{user?.name || "KeldersVisuals"}</h1>
+            </div>
           </div>
           <div className="flex gap-3">
             <button onClick={load} className="btn-outline-gold" data-testid="admin-refresh"><RefreshCcw size={14} /> Vernieuwen</button>
@@ -82,14 +71,12 @@ export default function AdminDashboard() {
           </div>
         </div>
 
-        {/* Stats */}
         <div className="grid sm:grid-cols-3 gap-4 mb-10">
           <Stat label="Totaal boekingen" value={bookings.length} />
           <Stat label="Nieuwe aanvragen" value={bookings.filter((b) => b.booking_status === "new").length} />
           <Stat label="Omzet (betaald)" value={`€${totalRevenue.toFixed(0)}`} />
         </div>
 
-        {/* Tabs */}
         <div className="flex gap-2 mb-6 border-b border-amber-500/10">
           {[["bookings", `Boekingen (${bookings.length})`], ["contacts", `Contact berichten (${contacts.length})`]].map(([k, l]) => (
             <button

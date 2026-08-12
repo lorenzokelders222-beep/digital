@@ -8,9 +8,7 @@ from typing import Optional, List
 
 import httpx
 import jwt
-import bcrypt
-from fastapi import FastAPI, APIRouter, HTTPException, Depends, status
-from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
+from fastapi import FastAPI, APIRouter, HTTPException, Depends, Request, Response
 from dotenv import load_dotenv
 from starlette.middleware.cors import CORSMiddleware
 from motor.motor_asyncio import AsyncIOMotorClient
@@ -25,14 +23,17 @@ DB_NAME = os.environ["DB_NAME"]
 EMAIL_KEY = os.environ["EMERGENT_EMAIL_KEY"]
 EMAIL_FROM_NAME = os.environ["EMAIL_FROM_NAME"]
 OWNER_EMAIL = os.environ["OWNER_EMAIL"]
+CONTACT_EMAIL = os.environ.get("CONTACT_EMAIL", OWNER_EMAIL)
 ADMIN_EMAIL = os.environ["ADMIN_EMAIL"]
 ADMIN_PASSWORD = os.environ["ADMIN_PASSWORD"]
 JWT_SECRET = os.environ["JWT_SECRET"]
 
-# Constant (never read from env — survives deployment)
+# Constants (never read from env — survives deployment)
 EMAIL_BASE_URL = "https://integrations.emergentagent.com"
+EMERGENT_AUTH_SESSION_URL = "https://demobackend.emergentagent.com/auth/v1/env/oauth/session-data"
 JWT_ALGO = "HS256"
 JWT_EXP_HOURS = 24 * 7
+SESSION_LIFETIME_DAYS = 7
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s")
 logger = logging.getLogger(__name__)
@@ -43,14 +44,13 @@ db = client[DB_NAME]
 
 app = FastAPI(title="KeldersVisuals API")
 api = APIRouter(prefix="/api")
-security = HTTPBearer(auto_error=False)
 
 
 # --- Models ---
 class BookingCreate(BaseModel):
     service: str
-    date: str  # YYYY-MM-DD
-    time: str  # HH:MM
+    date: str
+    time: str
     name: str
     email: EmailStr
     phone: str
@@ -75,8 +75,9 @@ class Booking(BaseModel):
     message: str = ""
     price: float = 0.0
     deposit: float = 0.0
-    payment_status: str = "pending"  # pending | paid | failed | cancelled
-    booking_status: str = "new"  # new | confirmed | completed | cancelled
+    payment_status: str = "pending"
+    booking_status: str = "new"
+    user_id: Optional[str] = None
     created_at: str = Field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
 
 
@@ -113,14 +114,23 @@ class BookingStatusUpdate(BaseModel):
     payment_status: Optional[str] = None
 
 
+class User(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+    user_id: str
+    email: str
+    name: str
+    picture: str = ""
+    is_admin: bool = False
+    created_at: str = Field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
+
+
+class SessionExchange(BaseModel):
+    session_id: str
+
+
 # --- Email helper ---
 async def send_email(to: str, subject: str, html: str, reply_to: Optional[str] = None) -> bool:
-    payload = {
-        "to": [to],
-        "subject": subject,
-        "html": html,
-        "from_name": EMAIL_FROM_NAME,
-    }
+    payload = {"to": [to], "subject": subject, "html": html, "from_name": EMAIL_FROM_NAME}
     if reply_to:
         payload["contact_email"] = reply_to
     try:
@@ -138,7 +148,6 @@ async def send_email(to: str, subject: str, html: str, reply_to: Optional[str] =
 
 
 def booking_email_html(b: Booking, payment_note: str = "") -> str:
-    total = b.price
     deposit_line = ""
     if b.deposit > 0:
         deposit_line = f"<tr><td style='padding:8px 0;color:#71717A;'>Aanbetaling</td><td style='padding:8px 0;color:#F4F4F6;text-align:right;'>€{b.deposit:.2f}</td></tr>"
@@ -161,7 +170,7 @@ def booking_email_html(b: Booking, payment_note: str = "") -> str:
               <tr><td style="padding:8px 0;color:#71717A;font-size:13px;">Tijd</td><td style="padding:8px 0;color:#F4F4F6;text-align:right;font-size:14px;">{b.time}</td></tr>
               <tr><td style="padding:8px 0;color:#71717A;font-size:13px;">Locatie</td><td style="padding:8px 0;color:#F4F4F6;text-align:right;font-size:14px;">{b.location}</td></tr>
               {deposit_line}
-              <tr><td style="padding:12px 0 4px;color:#D4AF37;font-size:14px;font-weight:600;">Totaal</td><td style="padding:12px 0 4px;color:#D4AF37;text-align:right;font-size:16px;font-weight:600;">€{total:.2f}</td></tr>
+              <tr><td style="padding:12px 0 4px;color:#D4AF37;font-size:14px;font-weight:600;">Totaal</td><td style="padding:12px 0 4px;color:#D4AF37;text-align:right;font-size:16px;font-weight:600;">€{b.price:.2f}</td></tr>
               <tr><td style="padding:8px 0;color:#71717A;font-size:13px;">Betalingsstatus</td><td style="padding:8px 0;color:#F4F4F6;text-align:right;font-size:14px;text-transform:capitalize;">{b.payment_status}</td></tr>
             </table>
             {f'<p style="color:#A1A1AA;font-size:13px;margin-top:16px;">{payment_note}</p>' if payment_note else ''}
@@ -227,41 +236,79 @@ def contact_email_html(c: ContactMessage) -> str:
     """
 
 
-# --- Auth ---
-def make_token(email: str) -> str:
-    payload = {
-        "sub": email,
-        "exp": datetime.now(timezone.utc) + timedelta(hours=JWT_EXP_HOURS),
-    }
-    return jwt.encode(payload, JWT_SECRET, algorithm=JWT_ALGO)
+# --- Auth helpers ---
+def make_jwt(email: str) -> str:
+    return jwt.encode(
+        {"sub": email, "exp": datetime.now(timezone.utc) + timedelta(hours=JWT_EXP_HOURS)},
+        JWT_SECRET, algorithm=JWT_ALGO,
+    )
 
 
-def require_admin(creds: Optional[HTTPAuthorizationCredentials] = Depends(security)):
-    if not creds:
+async def get_current_user(request: Request) -> Optional[User]:
+    """Read session_token from cookie or Authorization header; return User or None."""
+    token = request.cookies.get("session_token")
+    if not token:
+        auth = request.headers.get("Authorization", "")
+        if auth.startswith("Bearer "):
+            token = auth[7:]
+    if not token:
+        return None
+    sess = await db.user_sessions.find_one({"session_token": token}, {"_id": 0})
+    if not sess:
+        return None
+    exp = sess.get("expires_at")
+    if isinstance(exp, str):
+        exp = datetime.fromisoformat(exp)
+    if exp and exp.tzinfo is None:
+        exp = exp.replace(tzinfo=timezone.utc)
+    if exp and exp < datetime.now(timezone.utc):
+        return None
+    user_doc = await db.users.find_one({"user_id": sess["user_id"]}, {"_id": 0})
+    if not user_doc:
+        return None
+    return User(**user_doc)
+
+
+async def require_user(request: Request) -> User:
+    user = await get_current_user(request)
+    if not user:
         raise HTTPException(status_code=401, detail="Not authenticated")
-    try:
-        data = jwt.decode(creds.credentials, JWT_SECRET, algorithms=[JWT_ALGO])
-        if data.get("sub") != ADMIN_EMAIL:
-            raise HTTPException(status_code=403, detail="Forbidden")
-    except jwt.PyJWTError:
-        raise HTTPException(status_code=401, detail="Invalid token")
-    return data["sub"]
+    return user
 
 
-# --- Routes ---
+async def require_admin(request: Request) -> User:
+    """Admin = valid session AND email == ADMIN_EMAIL. Also allow legacy JWT (Bearer) as fallback."""
+    user = await get_current_user(request)
+    if user and user.email.lower() == ADMIN_EMAIL.lower():
+        return user
+    # Fallback: legacy JWT admin token
+    auth = request.headers.get("Authorization", "")
+    if auth.startswith("Bearer "):
+        try:
+            data = jwt.decode(auth[7:], JWT_SECRET, algorithms=[JWT_ALGO])
+            if data.get("sub", "").lower() == ADMIN_EMAIL.lower():
+                return User(user_id="legacy-admin", email=ADMIN_EMAIL, name="Admin", is_admin=True)
+        except jwt.PyJWTError:
+            pass
+    raise HTTPException(status_code=403, detail="Admin access required")
+
+
+# --- Public routes ---
 @api.get("/")
 async def root():
     return {"service": "KeldersVisuals API", "status": "ok"}
 
 
 @api.post("/bookings", response_model=Booking)
-async def create_booking(payload: BookingCreate):
+async def create_booking(payload: BookingCreate, request: Request):
     b = Booking(**payload.model_dump())
+    # Associate with current logged-in user if any
+    user = await get_current_user(request)
+    if user:
+        b.user_id = user.user_id
     await db.bookings.insert_one(b.model_dump())
-
-    # Send emails async (non-blocking for response speed)
     payment_note = "Je ontvangt binnenkort een aparte betaallink (SumUp) van ons ter bevestiging." if b.price > 0 else ""
-    asyncio.create_task(send_email(b.email, "Bevestiging boeking — KeldersVisuals", booking_email_html(b, payment_note), reply_to=OWNER_EMAIL))
+    asyncio.create_task(send_email(b.email, "Bevestiging boeking — KeldersVisuals", booking_email_html(b, payment_note), reply_to=CONTACT_EMAIL))
     asyncio.create_task(send_email(OWNER_EMAIL, f"Nieuwe boeking — {b.name}", owner_booking_html(b), reply_to=b.email))
     return b
 
@@ -282,28 +329,131 @@ async def create_contact(payload: ContactCreate):
     return {"status": "ok", "id": c.id}
 
 
-# --- Admin ---
+# --- Auth routes (Emergent managed Google) ---
+# REMINDER: DO NOT HARDCODE THE URL, OR ADD ANY FALLBACKS OR REDIRECT URLS, THIS BREAKS THE AUTH
+@api.post("/auth/session")
+async def exchange_session(payload: SessionExchange, response: Response):
+    """Exchange session_id (from OAuth redirect fragment) for a persistent session cookie."""
+    try:
+        async with httpx.AsyncClient(timeout=15) as c:
+            r = await c.get(EMERGENT_AUTH_SESSION_URL, headers={"X-Session-ID": payload.session_id})
+        if r.status_code != 200:
+            raise HTTPException(status_code=401, detail="Ongeldige sessie")
+        data = r.json()
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Session exchange failed: {e}")
+        raise HTTPException(status_code=502, detail="Auth service niet bereikbaar")
+
+    email = data.get("email")
+    if not email:
+        raise HTTPException(status_code=400, detail="Geen e-mail in sessie")
+
+    # Upsert user
+    existing = await db.users.find_one({"email": email.lower()}, {"_id": 0})
+    if existing:
+        user_id = existing["user_id"]
+        await db.users.update_one(
+            {"user_id": user_id},
+            {"$set": {"name": data.get("name", existing.get("name", "")),
+                       "picture": data.get("picture", existing.get("picture", ""))}}
+        )
+    else:
+        user_id = f"user_{uuid.uuid4().hex[:12]}"
+        await db.users.insert_one({
+            "user_id": user_id,
+            "email": email.lower(),
+            "name": data.get("name", ""),
+            "picture": data.get("picture", ""),
+            "is_admin": email.lower() == ADMIN_EMAIL.lower(),
+            "created_at": datetime.now(timezone.utc).isoformat(),
+        })
+
+    session_token = data.get("session_token") or uuid.uuid4().hex
+    expires_at = datetime.now(timezone.utc) + timedelta(days=SESSION_LIFETIME_DAYS)
+    await db.user_sessions.insert_one({
+        "user_id": user_id,
+        "session_token": session_token,
+        "expires_at": expires_at.isoformat(),
+        "created_at": datetime.now(timezone.utc).isoformat(),
+    })
+
+    response.set_cookie(
+        key="session_token",
+        value=session_token,
+        max_age=SESSION_LIFETIME_DAYS * 24 * 3600,
+        httponly=True,
+        secure=True,
+        samesite="none",
+        path="/",
+    )
+    is_admin = email.lower() == ADMIN_EMAIL.lower()
+    return {
+        "user_id": user_id,
+        "email": email,
+        "name": data.get("name", ""),
+        "picture": data.get("picture", ""),
+        "is_admin": is_admin,
+    }
+
+
+@api.get("/auth/me")
+async def auth_me(request: Request):
+    user = await get_current_user(request)
+    if not user:
+        raise HTTPException(status_code=401, detail="Not authenticated")
+    return {
+        "user_id": user.user_id,
+        "email": user.email,
+        "name": user.name,
+        "picture": user.picture,
+        "is_admin": user.email.lower() == ADMIN_EMAIL.lower(),
+    }
+
+
+@api.post("/auth/logout")
+async def logout(request: Request, response: Response):
+    token = request.cookies.get("session_token") or ""
+    if not token:
+        auth = request.headers.get("Authorization", "")
+        if auth.startswith("Bearer "):
+            token = auth[7:]
+    if token:
+        await db.user_sessions.delete_one({"session_token": token})
+    response.delete_cookie("session_token", path="/", samesite="none", secure=True)
+    return {"status": "ok"}
+
+
+# --- User routes (require login) ---
+@api.get("/me/bookings", response_model=List[Booking])
+async def my_bookings(user: User = Depends(require_user)):
+    docs = await db.bookings.find({"user_id": user.user_id}, {"_id": 0}).sort("created_at", -1).to_list(500)
+    return [Booking(**d) for d in docs]
+
+
+# --- Admin routes ---
 @api.post("/admin/login")
-async def admin_login(payload: AdminLogin):
+async def admin_login_legacy(payload: AdminLogin):
     if payload.email.lower() != ADMIN_EMAIL.lower() or payload.password != ADMIN_PASSWORD:
         raise HTTPException(status_code=401, detail="Ongeldige gegevens")
-    return {"token": make_token(ADMIN_EMAIL), "email": ADMIN_EMAIL}
+    return {"token": make_jwt(ADMIN_EMAIL), "email": ADMIN_EMAIL}
 
 
 @api.get("/admin/bookings", response_model=List[Booking])
-async def list_bookings(_: str = Depends(require_admin)):
+async def list_bookings(_: User = Depends(require_admin)):
     docs = await db.bookings.find({}, {"_id": 0}).sort("created_at", -1).to_list(500)
     return [Booking(**d) for d in docs]
 
 
 @api.get("/admin/contacts", response_model=List[ContactMessage])
-async def list_contacts(_: str = Depends(require_admin)):
+async def list_contacts(_: User = Depends(require_admin)):
     docs = await db.contacts.find({}, {"_id": 0}).sort("created_at", -1).to_list(500)
     return [ContactMessage(**d) for d in docs]
 
 
 @api.patch("/admin/bookings/{booking_id}", response_model=Booking)
-async def update_booking(booking_id: str, payload: BookingStatusUpdate, _: str = Depends(require_admin)):
+async def update_booking(booking_id: str, payload: BookingStatusUpdate, _: User = Depends(require_admin)):
     update = {k: v for k, v in payload.model_dump().items() if v is not None}
     if not update:
         raise HTTPException(status_code=400, detail="Nothing to update")
@@ -316,7 +466,7 @@ async def update_booking(booking_id: str, payload: BookingStatusUpdate, _: str =
 
 
 @api.delete("/admin/bookings/{booking_id}")
-async def delete_booking(booking_id: str, _: str = Depends(require_admin)):
+async def delete_booking(booking_id: str, _: User = Depends(require_admin)):
     r = await db.bookings.delete_one({"id": booking_id})
     if r.deleted_count == 0:
         raise HTTPException(status_code=404, detail="Not found")
