@@ -1,0 +1,8 @@
+crons:
+  - name: review-reminder
+    description: "Daily 10:00 CET check — sends 1x friendly review reminder to clients 7 days after their shoot was marked completed"
+    cron: "0 9 * * *"
+    endpoint: "{{BASE_URL}}/api/cron/review-reminders"
+    method: POST
+    # Cron endpoints must ack 2xx immediately; enqueue/background the actual work.
+    enabled: true

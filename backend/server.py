@@ -7,6 +7,7 @@ from pathlib import Path
 from typing import Optional, List
 
 import json
+import hmac
 import httpx
 import jwt
 from fastapi import FastAPI, APIRouter, HTTPException, Depends, Request, Response
@@ -32,6 +33,7 @@ ADMIN_PASSWORD = os.environ["ADMIN_PASSWORD"]
 JWT_SECRET = os.environ["JWT_SECRET"]
 EMERGENT_LLM_KEY = os.environ["EMERGENT_LLM_KEY"]
 PUBLIC_SITE_URL = os.environ.get("PUBLIC_SITE_URL", "").rstrip("/")
+WEBHOOK_CRON_SECRET = os.environ["WEBHOOK_CRON_SECRET"]
 LLM_MODEL = "gpt-5.4"
 
 # Constants (never read from env — survives deployment)
@@ -355,6 +357,36 @@ def review_request_email_html(b: Booking, review_url: str) -> str:
           <tr><td style="padding-top:24px;text-align:center;">
             <div style="color:#D4AF37;font-size:24px;letter-spacing:6px;margin-bottom:24px;">★ ★ ★ ★ ★</div>
             <a href="{review_url}" style="display:inline-block;background:#D4AF37;color:#0A0A0C;padding:14px 32px;text-decoration:none;font-weight:600;letter-spacing:2px;font-size:12px;text-transform:uppercase;">Deel je ervaring</a>
+          </td></tr>
+          <tr><td style="padding-top:32px;border-top:1px solid rgba(212,175,55,0.1);margin-top:32px;text-align:center;">
+            <p style="color:#71717A;font-size:12px;margin:16px 0 4px;">info@keldersvisuals.nl · 06-15133571</p>
+            <p style="color:#71717A;font-size:11px;">© KeldersVisuals</p>
+          </td></tr>
+        </table>
+      </td></tr>
+    </table>
+    """
+
+
+def review_reminder_email_html(b: Booking, review_url: str) -> str:
+    return f"""
+    <table width="100%" style="background:#0A0A0C;padding:40px 0;font-family:Arial,sans-serif;">
+      <tr><td align="center">
+        <table width="600" style="background:#121216;border:1px solid rgba(212,175,55,0.15);padding:40px;">
+          <tr><td style="text-align:center;padding-bottom:24px;border-bottom:1px solid rgba(212,175,55,0.2);">
+            <div style="font-family:Georgia,serif;font-size:28px;color:#D4AF37;letter-spacing:4px;">KELDERSVISUALS</div>
+            <div style="color:#A1A1AA;font-size:12px;letter-spacing:3px;margin-top:6px;">JOUW MOMENT, ONZE PASSIE</div>
+          </td></tr>
+          <tr><td style="padding-top:32px;">
+            <h1 style="color:#F4F4F6;font-family:Georgia,serif;font-weight:300;font-size:24px;margin:0 0 16px;">Een klein duwtje in de rug ✨</h1>
+            <p style="color:#A1A1AA;line-height:1.7;font-size:14px;">Hallo {b.name},</p>
+            <p style="color:#A1A1AA;line-height:1.7;font-size:14px;">We stuurden je vorige week een uitnodiging om jouw ervaring met KeldersVisuals te delen. Misschien is het ondergesneeuwd in de mail — geen zorgen, dat gebeurt.</p>
+            <p style="color:#A1A1AA;line-height:1.7;font-size:14px;">Als je één minuutje hebt, waarderen we een korte review enorm. En als er iets níet goed was: laat het ons vooral weten, dan pakken we dat direct op.</p>
+          </td></tr>
+          <tr><td style="padding-top:24px;text-align:center;">
+            <div style="color:#D4AF37;font-size:24px;letter-spacing:6px;margin-bottom:24px;">★ ★ ★ ★ ★</div>
+            <a href="{review_url}" style="display:inline-block;background:#D4AF37;color:#0A0A0C;padding:14px 32px;text-decoration:none;font-weight:600;letter-spacing:2px;font-size:12px;text-transform:uppercase;">Deel je ervaring</a>
+            <p style="color:#71717A;font-size:11px;margin-top:16px;">Dit is onze laatste herinnering — we spammen je niet nog eens.</p>
           </td></tr>
           <tr><td style="padding-top:32px;border-top:1px solid rgba(212,175,55,0.1);margin-top:32px;text-align:center;">
             <p style="color:#71717A;font-size:12px;margin:16px 0 4px;">info@keldersvisuals.nl · 06-15133571</p>
@@ -802,6 +834,77 @@ async def delete_review(review_id: str, _: User = Depends(require_admin)):
     if r.deleted_count == 0:
         raise HTTPException(status_code=404, detail="Not found")
     return {"status": "deleted"}
+
+
+# --- Scheduled cron: review reminder after 7 days ---
+async def run_review_reminders():
+    """Background worker: send 1x reminder to clients 7+ days after completion with no review yet."""
+    try:
+        threshold = datetime.now(timezone.utc) - timedelta(days=7)
+        cursor = db.bookings.find({
+            "booking_status": "completed",
+            "review_requested_at": {"$exists": True, "$ne": None},
+            "review_reminded_at": {"$in": [None]},
+        }, {"_id": 0})
+        candidates = await cursor.to_list(1000)
+        sent = 0
+        for doc in candidates:
+            req_at_raw = doc.get("review_requested_at")
+            if not req_at_raw:
+                continue
+            try:
+                req_at = datetime.fromisoformat(req_at_raw)
+                if req_at.tzinfo is None:
+                    req_at = req_at.replace(tzinfo=timezone.utc)
+            except Exception:
+                continue
+            if req_at > threshold:
+                continue  # not old enough
+            # Skip if review already submitted
+            has_review = await db.reviews.find_one({"booking_id": doc["id"]}, {"_id": 1})
+            if has_review:
+                await db.bookings.update_one(
+                    {"id": doc["id"]},
+                    {"$set": {"review_reminded_at": datetime.now(timezone.utc).isoformat(), "review_reminder_skipped": True}},
+                )
+                continue
+            b = Booking(**doc)
+            base = PUBLIC_SITE_URL or ""
+            review_url = f"{base}/review/{b.id}"
+            ok = await send_email(
+                b.email,
+                "Een klein duwtje — jouw review helpt enorm ✨",
+                review_reminder_email_html(b, review_url),
+                reply_to=CONTACT_EMAIL,
+            )
+            if ok:
+                sent += 1
+            await db.bookings.update_one(
+                {"id": b.id},
+                {"$set": {"review_reminded_at": datetime.now(timezone.utc).isoformat()}},
+            )
+        logger.info(f"[cron] review-reminders: processed={len(candidates)} sent={sent}")
+    except Exception as e:
+        logger.error(f"[cron] review-reminders error: {e}")
+
+
+@api.post("/cron/review-reminders")
+async def cron_review_reminders(request: Request):
+    # Cron endpoints must ack 2xx immediately; enqueue/background the actual work.
+    auth = request.headers.get("Authorization", "")
+    if not auth.startswith("Bearer "):
+        raise HTTPException(status_code=401, detail="Missing auth")
+    token = auth[7:]
+    if not hmac.compare_digest(token, WEBHOOK_CRON_SECRET):
+        raise HTTPException(status_code=401, detail="Invalid auth")
+    run_id = request.headers.get("X-Webhook-Id") or str(uuid.uuid4())
+    # Idempotency: skip if already recorded a run for this id in the last hour
+    existing = await db.cron_runs.find_one({"run_id": run_id})
+    if existing:
+        return {"status": "duplicate", "run_id": run_id}
+    await db.cron_runs.insert_one({"run_id": run_id, "job": "review-reminders", "at": datetime.now(timezone.utc).isoformat()})
+    asyncio.create_task(run_review_reminders())
+    return {"status": "accepted", "run_id": run_id}
 
 
 app.include_router(api)
