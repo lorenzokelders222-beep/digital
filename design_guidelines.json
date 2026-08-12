@@ -1,0 +1,164 @@
+{
+  "brand_identity": {
+    "company_name": "KeldersVisuals",
+    "slogan": "Jouw moment, onze passie.",
+    "positioning": "High-End Dutch Photography & Videography Studio specializing in Automotive, Portraits, Drone/FPV, Corporate Content & Social Media.",
+    "emotional_archetype": "ARCHETYPE 5: LUXURY & EDITORIAL CINEMATIC",
+    "design_tone": "Exclusive, dark cinematic elegance, editorial depth, quiet luxury, photography-first, subtle golden hairline details & organic botanical watermarks."
+  },
+  "color_palette": {
+    "background_primary": "#0A0A0C",
+    "background_secondary": "#121216",
+    "surface_card": "#18181E",
+    "surface_card_hover": "#22222A",
+    "border_subtle": "rgba(212, 175, 55, 0.15)",
+    "border_gold": "rgba(212, 175, 55, 0.4)",
+    "accent_gold": "#D4AF37",
+    "accent_gold_glow": "#C5A059",
+    "text_primary": "#F4F4F6",
+    "text_secondary": "#A1A1AA",
+    "text_muted": "#71717A",
+    "text_gold": "#E2C044",
+    "status_success": "#22C55E",
+    "status_warning": "#F59E0B",
+    "status_error": "#EF4444"
+  },
+  "typography": {
+    "heading_font": "Cormorant Garamond, Playfair Display, serif",
+    "body_font": "Plus Jakarta Sans, Inter, sans-serif",
+    "mono_font": "JetBrains Mono, monospace",
+    "hierarchy": {
+      "hero_title": "text-4xl sm:text-5xl lg:text-6xl font-light tracking-tight leading-[1.1]",
+      "section_heading": "text-2xl sm:text-3xl lg:text-4xl font-light tracking-tight leading-snug",
+      "card_title": "text-xl sm:text-2xl font-normal tracking-wide",
+      "body": "text-sm sm:text-base text-zinc-400 leading-relaxed font-light",
+      "caption": "text-xs uppercase tracking-[0.2em] text-amber-400/80 font-mono"
+    }
+  },
+  "layout_and_spacing": {
+    "container_padding": "px-4 sm:px-8 lg:px-16 max-w-7xl mx-auto",
+    "section_spacing": "py-20 lg:py-32",
+    "bento_grid_mode": "MODE A: TETRIS GRID (Asymmetrical Editorial Grid for Portfolio & Services)",
+    "rules": [
+      "Generous spacing: use py-20 to py-32 for section breathing room.",
+      "Never crowd photo cards; let negative space frame each visual piece.",
+      "Subtle 1px border with 15% opacity gold (rgba(212, 175, 55, 0.15)) on cards.",
+      "Containers with borders must have p-6 or p-8 internal padding.",
+      "No full screen flat text overlay. Use gradient fade from black/80 to transparent."
+    ]
+  },
+  "visual_enhancers": {
+    "botanical_decorations": "Subtle low-opacity SVG floral/botanical leaf vector outlines floating softly in background corners (opacity 0.04 to 0.08 in gold/zinc).",
+    "gold_lines": "1px horizontal and vertical accent dividers in rgba(212,175,55,0.25) with soft shimmer animation.",
+    "glassmorphism": "backdrop-blur-xl bg-black/70 border border-amber-500/10 for sticky headers, floating WhatsApp CTA, and lightbox overlays.",
+    "micro_interactions": "Smooth 0.3s ease transitions, slow image hover zoom (scale-105), soft gold outer glow on focus/hover (shadow-[0_0_20px_rgba(212,175,55,0.15)])."
+  },
+  "image_urls": {
+    "hero_background": {
+      "url": "https://images.unsplash.com/photo-1567808291548-fc3ee04dbcf0?crop=entropy&cs=srgb&fm=jpg&q=85",
+      "description": "Cinematic dark black supercar with soft studio lighting",
+      "category": "Hero Showcase"
+    },
+    "services": {
+      "fotografie": "https://images.unsplash.com/photo-1675726205553-4e348f24da2c?crop=entropy&cs=srgb&fm=jpg&q=85",
+      "videografie": "https://images.unsplash.com/photo-1512025316832-8658f04f8a83?crop=entropy&cs=srgb&fm=jpg&q=85",
+      "drone_fpv": "https://images.unsplash.com/photo-1520870121499-7dddb6ccbcde?crop=entropy&cs=srgb&fm=jpg&q=85",
+      "automotive": "https://images.unsplash.com/photo-1580014317999-e9f1936787a5?crop=entropy&cs=srgb&fm=jpg&q=85",
+      "portret": "https://images.unsplash.com/photo-1720022785516-9653ead7180c?crop=entropy&cs=srgb&fm=jpg&q=85",
+      "bedrijf": "https://images.unsplash.com/photo-1771270759486-1f7703945072?crop=entropy&cs=srgb&fm=jpg&q=85",
+      "social_media": "https://images.unsplash.com/photo-1725288453683-3d3a6ec420ec?crop=entropy&cs=srgb&fm=jpg&q=85",
+      "maatwerk": "https://images.unsplash.com/photo-1470338229081-eb5980be28c9?crop=entropy&cs=srgb&fm=jpg&q=85"
+    },
+    "portfolio": [
+      {
+        "url": "https://images.unsplash.com/photo-1580014317999-e9f1936787a5?crop=entropy&cs=srgb&fm=jpg&q=85",
+        "title": "Porsche Tail Lights in Twilight",
+        "category": "Automotive"
+      },
+      {
+        "url": "https://images.unsplash.com/photo-1675726205553-4e348f24da2c?crop=entropy&cs=srgb&fm=jpg&q=85",
+        "title": "Editorial Shadow Portrait",
+        "category": "Portret"
+      },
+      {
+        "url": "https://images.unsplash.com/photo-1488263590619-bc1fff43b6c1?crop=entropy&cs=srgb&fm=jpg&q=85",
+        "title": "Snow Peak Aerial View",
+        "category": "Drone & FPV"
+      },
+      {
+        "url": "https://images.unsplash.com/photo-1512025316832-8658f04f8a83?crop=entropy&cs=srgb&fm=jpg&q=85",
+        "title": "Cinema Rig Studio Shoot",
+        "category": "Videografie"
+      },
+      {
+        "url": "https://images.unsplash.com/photo-1601929862217-f1bf94503333?crop=entropy&cs=srgb&fm=jpg&q=85",
+        "title": "BMW M3 High Speed Pursuit",
+        "category": "Automotive"
+      },
+      {
+        "url": "https://images.unsplash.com/photo-1771270759486-1f7703945072?crop=entropy&cs=srgb&fm=jpg&q=85",
+        "title": "Executive Suite Brand Story",
+        "category": "Bedrijf"
+      }
+    ],
+    "about_us": "https://images.unsplash.com/photo-1470338229081-eb5980be28c9?crop=entropy&cs=srgb&fm=jpg&q=85",
+    "botanical_watermark": "https://images.unsplash.com/photo-1600172454132-ada7faa101cf?crop=entropy&cs=srgb&fm=jpg&q=85"
+  },
+  "component_guidelines": {
+    "navigation": {
+      "style": "Sticky glassmorphic top header (bg-black/70 backdrop-blur-xl border-b border-amber-500/10)",
+      "elements": ["Logo (KeldersVisuals in Cormorant with subtle gold diamond symbol)", "Links: Home, Over Ons, Diensten, Portfolio, Voor Bedrijven, Werkwijze, Contact", "WhatsApp Direct CTA button", "Boek Nu Button with gold border"]
+    },
+    "hero": {
+      "style": "Fullscreen min-h-screen relative flex items-center dark overlay with subtle gradient",
+      "features": ["Badge: 'EXCLUSIEVE BEELDCREATIE'", "Headline: 'Jouw moment, onze passie.'", "Subheading: High-end fotografie, videografie & FPV-dronebeelden die indruk maken.", "Dual CTAs: 'Direct Boeken' (Gold button) and 'Bekijk Portfolio' (Outline)"]
+    },
+    "usp_section": {
+      "title": "Meer dan alleen een foto",
+      "pillars": [
+        {"title": "Cinematische Kwaliteit", "desc": "4K RAW opnames met Hollywood-level color grading en studiolicht."},
+        {"title": "FPV & Drone Perspectief", "desc": "Dynamische shots vanuit de lucht die verhalen vertellen die niemand vergeet."},
+        {"title": "Maatwerk Concepten", "desc": "Van eerste brainstorm tot de perfecte oplevering afgestemd op jouw merk."},
+        {"title": "Snelle & Discrete Oplevering", "desc": "Binnen 5 werkdagen je foto's en video's digitaal in hoogste resolutie."}
+      ]
+    },
+    "booking_wizard": {
+      "steps": [
+        "1. Kies je Dienst (Fotografie, Videografie, Drone, Automotive, Portret, Bedrijf, Social Media, Maatwerk)",
+        "2. Datum & Tijdslot Selectie",
+        "3. Je Gegevens & Projectdetails",
+        "4. Overzicht & Pakketkeuze",
+        "5. Bevestiging & Aanbetaling / Reservering"
+      ],
+      "style": "Dark modal/view with gold step indicator progress bar and clean inputs"
+    },
+    "admin_dashboard": {
+      "style": "High-density clean dark command center (bg-[#0C0C0F])",
+      "features": ["Login screen for admin", "Boekingen overzicht tabel met status filters (Nieuw, Bevestigd, Afgerond)", "Omzet & statistieken widgets", "Directe WhatsApp/E-mail acties per boeking"]
+    }
+  },
+  "testing_requirements": {
+    "mandatory_attribute": "data-testid",
+    "examples": [
+      "data-testid=\"nav-logo\"",
+      "data-testid=\"nav-booking-cta\"",
+      "data-testid=\"nav-whatsapp-cta\"",
+      "data-testid=\"hero-booking-button\"",
+      "data-testid=\"service-card-automotive\"",
+      "data-testid=\"portfolio-filter-all\"",
+      "data-testid=\"portfolio-item-0\"",
+      "data-testid=\"booking-wizard-step-1-service\"",
+      "data-testid=\"booking-wizard-next-button\"",
+      "data-testid=\"contact-form-submit-button\"",
+      "data-testid=\"admin-login-button\""
+    ]
+  },
+  "instructions_to_main_agent": [
+    "Ensure Dutch locale throughout the UI ('Boek Nu', 'Onze Diensten', 'Contact Opnemen', 'Offerte Aanvragen').",
+    "Implement Lenis or smooth scroll behavior for an ultra-premium studio feel.",
+    "Avoid tacky heavy gold gradients; use gold as 1px borders, subtle icon glows, and elegant typography accents.",
+    "Include floating WhatsApp button at bottom right (data-testid='floating-whatsapp-button').",
+    "Ensure interactive Lightbox modal opens when clicking any portfolio item.",
+    "Build backend API endpoints in backend/server.py for storing bookings, contact messages, and admin authentication."
+  ]
+}

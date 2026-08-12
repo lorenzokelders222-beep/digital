@@ -1,0 +1,31 @@
+{
+  "summary": "First end-to-end smoke test of KeldersVisuals. All 10 backend endpoints and all major frontend flows (homepage, services, portfolio+lightbox, contact, 5-step booking wizard, admin login/dashboard/logout) work correctly against the public preview URL.",
+  "tested_scope": ["backend", "frontend", "auth", "integration"],
+  "passed": [
+    "GET /api/ health -> 200 {service:'KeldersVisuals API', status:'ok'}",
+    "POST /api/bookings creates booking with id, price, payment_status=pending, booking_status=new (fields: service/date/time)",
+    "GET /api/bookings/{id} returns persisted booking",
+    "POST /api/contact -> 200 {status:'ok', id:...}",
+    "POST /api/admin/login wrong password -> 401; correct creds -> JWT token returned",
+    "GET /api/admin/bookings without token -> 401; with Bearer token -> 200 list",
+    "GET /api/admin/contacts with token -> 200 list",
+    "PATCH /api/admin/bookings/{id} booking_status=confirmed and payment_status=paid both applied",
+    "DELETE /api/admin/bookings/{id} -> {status:'deleted'}, subsequent GET -> 404",
+    "Homepage loads, KELDERSVISUALS hero visible, hero-booking-button + hero-portfolio-button + floating-whatsapp-button present",
+    "Services page shows all 8 service-card-{slug} tiles (fotografie, videografie, drone-fpv, automotive, portret, bedrijf, social-media, maatwerk)",
+    "Portfolio filters (alles, automotive) present; portfolio-item-0 opens portfolio-lightbox and close works",
+    "Contact form (contact-name/email/message + contact-form-submit-button) shows success toast",
+    "Booking wizard 5-step flow completes, redirects to /boeking-bevestiging/{id} with booking-summary-card visible",
+    "Admin login redirects to /admin, admin-bookings-list rendered, admin-tab-contacts clickable, admin-logout returns to /admin/login"
+  ],
+  "failed": [],
+  "observations": [
+    "Booking payload requires fields service/date/time (not service_type/preferred_date/preferred_time). Frontend uses correct names.",
+    "Deposit is not auto-computed server-side; API stores whatever client sends (defaults 0). If 25% deposit rule is a backend requirement, backend does not enforce it — currently frontend responsibility. Not a blocker for MVP.",
+    "SumUp payment is a placeholder as expected (MOCKED)."
+  ],
+  "action_items": [],
+  "success_rate": {"backend": "100%", "frontend": "100%"},
+  "retest_needed": false,
+  "full_testing_deferred": true
+}
